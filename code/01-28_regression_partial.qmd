@@ -423,7 +423,10 @@ ggplot(reg_dfw,
 options(contrasts = c("contr.sum", "contr.poly"))
 
 # Model fitting
-mod3_quad 
+mod3_quad <- lmer(yield_mgha ~ sr_ksha + 
+                    I(sr_ksha^2) + (1|rep),
+                  data = reg_dfw
+                    )
 
 # Summary
 summary(mod3_quad)
@@ -449,7 +452,7 @@ ggplot(mod3_quad_aug,
            y = .stdresid))+
   geom_hline(yintercept = 0, color = "red")+
   geom_point(size = 3, alpha = .7)+
-  geom_smooth(method = "lm")
+  geom_smooth()
 ```
 Residuals are looking better now, no pattern.  
 
@@ -530,7 +533,7 @@ mod3_quad_boots <- bootMer(mod3_quad,
   confint() %>%
   as.data.frame() %>%
   rename(mod3_quad_lcl = `2.5 %`,
-         mod3_quad_upl = `97.5 %`)
+         mod3_quad_ucl = `97.5 %`)
 
 
 nd <- nd %>%
@@ -548,7 +551,7 @@ ggplot(reg_dfw,
             color = "forestgreen")+
   geom_ribbon(data = nd, aes(x = sr_ksha, 
                              ymin = mod3_quad_lcl,
-                             ymax = mod3_quad_upl),
+                             ymax = mod3_quad_ucl),
               fill = "gray", 
               alpha = 0.5, 
               inherit.aes = FALSE)
@@ -577,7 +580,19 @@ After that, we can choose the model that best fit our data and use it to extract
 options(contrasts = c("contr.sum", "contr.poly"))
 
 # Model fitting
-mod4_linp 
+mod4_linp <- nlme(yield_mgha ~ SSlinp(sr_ksha,
+                                      a,b,xs),
+                  data = reg_dfw,
+                  random = list(rep = pdDiag(a + b + xs ~ 1)),
+                  fixed = list(a ~ 1,
+                               b ~ 1,
+                               xs ~ 1),
+                  start = c(a = 0,
+                            b = 0.3,
+                            xs = 80
+                            )
+                  
+                  )
 
 # Summary
 summary(mod4_linp)
@@ -604,7 +619,7 @@ ggplot(mod4_linp_aug,
            y = .stdresid))+
   geom_hline(yintercept = 0, color = "red")+
   geom_point(size = 3, alpha = .7)+
-  geom_smooth(method = "lm")
+  geom_smooth()
 ```
 Looking good.  
 
@@ -621,12 +636,14 @@ Looking good.
 On this plot, looking for normality.
 
 ```{r mod4 QQ plot for Rep random effect}
-mod4_linp_randeff 
+mod4_linp_randeff <- ranef(mod4_linp) %>%
+  as.data.frame()
 
 ggplot(mod4_linp_randeff, 
        aes(sample = estimate))+
   stat_qq()+
-  stat_qq_line() 
+  stat_qq_line() +
+  facet_wrap(~term)
 
 ```
 b and xs random estimates are so small that seem to be all zero.  
@@ -683,7 +700,7 @@ mod4_linp_boots <- boot_nlme(mod4_linp,
   confint() %>%
   as.data.frame() %>%
   rename(mod4_linp_lcl = `2.5 %`,
-         mod4_linp_upl = `97.5 %`)
+         mod4_linp_ucl = `97.5 %`)
 
 nd <- nd %>%
   bind_cols(mod4_linp_boots)
@@ -700,12 +717,10 @@ ggplot(reg_dfw,
             color = "forestgreen")+
   geom_ribbon(data = nd, aes(x = sr_ksha, 
                              ymin = mod4_linp_lcl,
-                             ymax = mod4_linp_upl),
+                             ymax = mod4_linp_ucl),
               fill = "gray", 
               alpha = 0.5, 
               inherit.aes = FALSE)
-
-
 
 ```
 
@@ -713,12 +728,33 @@ ggplot(reg_dfw,
 ## a) Visual comparison
 ```{r comparison plot}
 ggplot(reg_dfw, aes(x = sr_ksha, y = yield_mgha))+
-  geom_point(size = 4, alpha = .6)
+  geom_point(size = 4, alpha = .6) +
+  geom_line(data = nd,
+            aes(y = mod1_yield_mgha),
+            color = "forestgreen"
+            ) +
+  geom_line(data = nd,
+            aes(y = mod2_yield_mgha),
+            color = "blue"
+            ) +
+  geom_line(data = nd,
+            aes(y = mod3_yield_mgha),
+            color = "purple"
+            ) +
+  geom_line(data = nd,
+            aes(y = mod4_yield_mgha),
+            color = "orange"
+            )
 
 
 ```
 ## Table comparison  
 ```{r}
+IC_tab(mod1_int,
+       mod2_lin,
+       mod3_quad,
+       mod4_linp
+       )
 
 ```
 Based on the above, model 4 (linear-plateau) had the lowest AIC and thus should be used to find the optimum level of seeding rate.  
@@ -727,14 +763,18 @@ Based on the above, model 4 (linear-plateau) had the lowest AIC and thus should 
 Because our best model was the linear-plateau, let's find its seeding rate that optimized yield.  
 
 ```{r optimum SR}
-
+mod4_linp %>%
+  intervals(which = "fixed")
 
 ```
 Based on the linear-plateau model, the level of seeding rate to optimize corn grain yield in this study was **73.47** thousand seeds/ha.  
 
 Now let's predict what was the yield at that seeding rate.  
 ```{r yield at optimum SR}
-
+predict(mod4_linp,
+        newdata = data.frame(sr_ksha = 73.48),
+        level = 0
+        )
 
 ```
 At the optimum seeding rate of **73.47** thousand seeds/ha, corn grain yield was **13.45** Mg/ha.
@@ -744,7 +784,17 @@ ggplot(reg_dfw, aes(x = sr_ksha, y = yield_mgha))+
   geom_point(size = 4, alpha = .6)+
   geom_line(data = nd, aes(y = mod4_yield_mgha), 
             color = "orange",
-            size = 1.5) 
+            size = 1.5) +
+  geom_segment(x = 73.48,
+               xend = 73.48,
+               y = 0,
+               yend = 13.45
+               ) +
+  geom_segment(x = 30,
+               xend = 73.48,
+               y = 13.45,
+               yend = 13.45
+               )
 
 ```
 # 9) Take-home  
@@ -755,5 +805,5 @@ ggplot(reg_dfw, aes(x = sr_ksha, y = yield_mgha))+
 
 -   Always check residuals! p-values alone do not tell you whether model is adequate for your data!
 
-# Quiz
+# Quiz  
 
